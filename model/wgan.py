@@ -3,7 +3,6 @@ import keras.backend as K
 import matplotlib.pyplot as plt
 from keras.models import Model,Sequential
 from keras.optimizers import RMSprop
-from keras.initializers import RandomNormal
 from keras.layers.normalization import BatchNormalization
 from keras.layers.convolutional import Conv2D, Conv2DTranspose
 from keras.layers import Input, Dense, Flatten, Reshape, LeakyReLU
@@ -18,20 +17,16 @@ class GAN():
         self.learning_rate = learning_rate
         self.save_path = save_path
         
-        self.initializer = RandomNormal(mean=0.0, stddev=0.02, seed=None)
-        
         self.gen = self.generator()
         self.dis = self.discriminator()
         
         #only train the generator
-        
         gen_input = Input(shape = (self.latent_dim,))
         imgs = self.gen(gen_input)
         dis_output = self.dis(imgs)
         self.gan_dis = Model(gen_input, dis_output)
         opt = RMSprop(lr = self.learning_rate)
         self.gan_dis.compile(optimizer = opt, loss = self.wasserstein_loss, metrics = ['accuracy'])
-
 
     def generator(self):
         noise = Input(shape = (self.latent_dim,))
