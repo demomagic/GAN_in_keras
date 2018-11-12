@@ -4,7 +4,7 @@ Generative Adversarial Nets(GAN) Project
 # DCGAN
     python main.py --model=dcgan
 ## paper
-[[[Unsupervised Representation Learning with Deep Convolutional Generative Adversarial Networks]]](https://arxiv.org/pdf/1511.06434.pdf)
+[[Unsupervised Representation Learning with Deep Convolutional Generative Adversarial Networks]](https://arxiv.org/pdf/1511.06434.pdf)
 ## algorithm
 ![algorithm](https://github.com/demomagic/GAN_in_keras/blob/master/imgs/dcgan.jpg)
 
