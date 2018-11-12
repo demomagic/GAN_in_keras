@@ -1,11 +1,10 @@
 import numpy as np
-import keras.backend as K
 import matplotlib.pyplot as plt
 from keras.models import Model,Sequential
-from keras.optimizers import RMSprop
+from keras.optimizers import SGD
 from keras.layers.normalization import BatchNormalization
-from keras.layers.convolutional import Conv2D, Conv2DTranspose
-from keras.layers import Input, Dense, Flatten, Reshape, LeakyReLU
+from keras.layers.convolutional import Conv2D
+from keras.layers import Input, Dense, Flatten, Reshape, Activation, UpSampling2D, MaxPooling2D
 
 class GAN():
     def __init__(self, datasets, save_path, latent_dim = 100, learning_rate = 0.0005):
@@ -26,59 +25,53 @@ class GAN():
         imgs = self.gen(gen_input)
         dis_output = self.dis(imgs)
         self.gan_dis = Model(gen_input, dis_output)
-        opt = RMSprop(lr = self.learning_rate)
-        self.gan_dis.compile(optimizer = opt, loss = self.wasserstein_loss, metrics = ['accuracy'])
-
-
+        opt = SGD(lr=self.learning_rate, momentum=0.9, nesterov=True)
+        self.gan_dis.compile(optimizer = opt, loss = 'binary_crossentropy')
+        
     def generator(self):
         noise = Input(shape = (self.latent_dim,))
+        
         model = Sequential()
-        model.add(Dense(1024, input_dim = self.latent_dim))
-        model.add(LeakyReLU())
-        model.add(Dense(128 * 7 * 7))
+        model.add(Dense(input_dim=self.latent_dim, units=1024))
+        model.add(Activation('tanh'))
+        model.add(Dense(128*7*7))
         model.add(BatchNormalization())
-        model.add(LeakyReLU())
-        model.add(Reshape((7, 7, 128), input_shape=(128 * 7 * 7,)))
-        model.add(Conv2DTranspose(128, (5, 5), strides=2, padding='same'))
-        model.add(BatchNormalization())
-        model.add(LeakyReLU())
+        model.add(Activation('tanh'))
+        model.add(Reshape((7, 7, 128), input_shape=(128*7*7,)))
+        model.add(UpSampling2D(size=(2, 2)))
         model.add(Conv2D(64, (5, 5), padding='same'))
-        model.add(BatchNormalization())
-        model.add(LeakyReLU())
-        model.add(Conv2DTranspose(64, (5, 5), strides=2, padding='same'))
-        model.add(BatchNormalization())
-        model.add(LeakyReLU())
-        model.add(Conv2D(self.channel, (5, 5), padding='same', activation='tanh'))
+        model.add(Activation('tanh'))
+        model.add(UpSampling2D(size=(2, 2)))
+        model.add(Conv2D(1, (5, 5), padding='same'))
+        model.add(Activation('tanh'))
         
         image = model(noise)
-        model.summary()
         
         return Model(noise, image)
-        
+    
     def discriminator(self):
         image = Input(shape = self.input_shape)
         
         model = Sequential()
         model.add(Conv2D(64, (5, 5), padding='same', input_shape=self.input_shape))
-        model.add(LeakyReLU())
-        model.add(Conv2D(128, (5, 5), kernel_initializer='he_normal', strides=[2, 2]))
-        model.add(LeakyReLU())
-        model.add(Conv2D(128, (5, 5), kernel_initializer='he_normal', padding='same', strides=[2, 2]))
-        model.add(LeakyReLU())
+        model.add(Activation('tanh'))
+        model.add(MaxPooling2D(pool_size=(2, 2)))
+        model.add(Conv2D(128, (5, 5)))
+        model.add(Activation('tanh'))
+        model.add(MaxPooling2D(pool_size=(2, 2)))
         model.add(Flatten())
-        model.add(Dense(1024, kernel_initializer='he_normal'))
-        model.add(LeakyReLU())
-        model.add(Dense(1, kernel_initializer='he_normal'))
+        model.add(Dense(1024))
+        model.add(Activation('tanh'))
+        model.add(Dense(1))
+        model.add(Activation('sigmoid'))
         
-        outputs = model(image)
-        model.summary()
-
-        model = Model(image, outputs)
-        opt = RMSprop(lr = self.learning_rate)
-        model.compile(optimizer = opt, loss = self.wasserstein_loss, metrics = ['accuracy'])
+        output = model(image)
+        model = Model(image, output)
+        opt = SGD(lr=self.learning_rate, momentum=0.9, nesterov=True)
+        model.compile(loss='binary_crossentropy', optimizer=opt)
         
         return model
-    
+
     def train_network(self, epochs = 100, batch_size = 64):
         d_iters = 5
         batch_num = len(self.X_train) // batch_size
@@ -101,23 +94,14 @@ class GAN():
                     d_loss_real = self.dis.train_on_batch(images, valid)
                     d_loss_fake = self.dis.train_on_batch(fake_images, fake)
                     d_loss = 0.5 * np.add(d_loss_fake, d_loss_real)
-                    
-                    self.clip_d_weights()
-                
+                                    
                 # Train the generator
                 self.dis.trainable = False
                 g_loss = self.gan_dis.train_on_batch(noise, valid)
                 # Plot the progress
-                print ("%d [D loss: %f] [G loss: %f]" % (epoch, 1 - d_loss[0], 1 - g_loss[0]))
+                print ("%d [D loss: %f] [G loss: %f]" % (epoch, d_loss, g_loss))
             
             self.sample_images(epoch)
-    
-    def clip_d_weights(self):
-        weights = [np.clip(w, -0.01, 0.01) for w in self.dis.get_weights()]
-        self.dis.set_weights(weights)
-        
-    def wasserstein_loss(self, y_true, y_pred):
-        return K.mean(y_true * y_pred)
     
     def sample_images(self, epoch):
         r, c = 5, 5
