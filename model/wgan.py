@@ -51,7 +51,7 @@ class GAN():
         model.add(Conv2DTranspose(64, (5, 5), strides=2, padding='same'))
         model.add(BatchNormalization())
         model.add(LeakyReLU())
-        model.add(Conv2D(1, (5, 5), padding='same', activation='tanh'))
+        model.add(Conv2D(self.channel, (5, 5), padding='same', activation='tanh'))
         
         image = model(noise)
         model.summary()
