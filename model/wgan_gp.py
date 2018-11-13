@@ -1,31 +1,28 @@
 import numpy as np
-import tensorflow as tf
 import matplotlib.pyplot as plt
 import keras.backend as K
+from functools import partial
+from keras.optimizers import Adam
+from keras.layers.merge import _Merge
 from keras.models import Model, Sequential
 from keras.layers.normalization import BatchNormalization
 from keras.layers.convolutional import Conv2D, Conv2DTranspose
 from keras.layers import Input, Dense, Flatten, Reshape, LeakyReLU
 
 class GAN():
-    def __init__(self, datasets, save_path, latent_dim = 100, learning_rate = 0.0005):
+    def __init__(self, datasets, save_path, latent_dim = 100, learning_rate = 0.0001):
         (self.X_train, _), (_, _) = datasets.load_data()
         (_, self.image_width, self.image_height) = self.X_train.shape
         self.channel = 1
         self.input_shape = (self.image_width, self.image_height, self.channel)
         self.latent_dim = latent_dim
+        
         self.learning_rate = learning_rate
         self.save_path = save_path
         
         self.gen = self.generator()
         self.dis = self.discriminator()
-
-        self.real_image, self.random_input, self.fake_image, self.d_loss, self.g_loss, self.d_opt, self.g_opt = self.build_training_method()
-        
-        self.sess = tf.Session()
-        K.set_session(self.sess)
-        self.sess.run(tf.global_variables_initializer())
-
+                
     def generator(self):
         noise = Input(shape = (self.latent_dim,))
         
@@ -71,35 +68,33 @@ class GAN():
         model.summary()
         
         return Model(image, outputs)
-    
+
     def build_training_method(self):
-        real_image = tf.placeholder(tf.float32, shape=[None, self.image_width, self.image_height, self.channel])
-        random_input = tf.placeholder(tf.float32, shape=[None, self.latent_dim])
+        opt = Adam(lr = self.learning_rate,  beta_1=0., beta_2=0.9)
         
-        fake_image = self.gen(random_input)
-        real_result = self.dis(real_image)
+        self.gen.trainable = False
+        real_image = Input(shape = self.input_shape)
+        dis_random_input = Input(shape=(self.latent_dim,))
+        fake_image = self.gen(dis_random_input)
+        dis_fake = self.dis(fake_image)
+        dis_real = self.dis(real_image)
+        averaged_samples = RandomWeightedAverage()([real_image, fake_image])
+        averaged_samples_out = self.dis(averaged_samples)
+        partial_gp_loss = partial(self.gradient_penalty_loss, averaged_samples=averaged_samples)
+        partial_gp_loss.__name__ = 'gradient_penalty' # Keras requires function names
+        self.dis_model = Model(inputs = [real_image, dis_random_input], outputs = [dis_real, dis_fake, averaged_samples_out])
+        self.dis_model.compile(loss = [self.wasserstein_loss, self.wasserstein_loss, partial_gp_loss], optimizer = opt, loss_weights = [1, 1, 10])
         
-        fake_result = self.dis(fake_image)
-        d_loss = -(tf.reduce_sum(real_result) - tf.reduce_sum(fake_result))
-        g_loss = -tf.reduce_sum(fake_result)
-        
-        # gradient penalty
-        alpha = tf.random_uniform((tf.shape(real_image)[0], 1, 1, 1), minval = 0., maxval = 1,)
-        differ = fake_image - real_image
-        interp = real_image + (alpha * differ)
-        grads = tf.gradients(self.dis(interp), [interp])[0]
-        slopes = tf.sqrt(tf.reduce_sum(tf.square(grads), reduction_indices = [3]))
-        grad_penalty = tf.reduce_mean((slopes - 1.)**2)
-        d_loss += 10 * grad_penalty
-        
-        d_opt = tf.train.AdamOptimizer(learning_rate = self.learning_rate, beta1 = 0., beta2 = 0.9)\
-                    .minimize(d_loss, var_list = self.dis.trainable_weights)
-        g_opt = tf.train.AdamOptimizer(learning_rate = self.learning_rate, beta1 = 0., beta2 = 0.9)\
-                    .minimize(g_loss, var_list = self.gen.trainable_weights)
-        
-        return real_image, random_input, fake_image, d_loss, g_loss, d_opt, g_opt
+        self.gen.trainable = True
+        self.dis.trainable = False
+        gen_random_input = Input(shape=(self.latent_dim,))
+        fake_image = self.gen(gen_random_input)
+        dis_fake = self.dis(fake_image)
+        self.gen_model = Model(gen_random_input, dis_fake)
+        self.gen_model.compile(loss = self.wasserstein_loss, optimizer = opt)
         
     def train_network(self, epochs = 100, batch_size = 64):
+        self.build_training_method()
         
         d_iters = 5
         batch_num = len(self.X_train) // batch_size
@@ -108,21 +103,39 @@ class GAN():
         X_train = (self.X_train.astype(np.float32) - 127.5) / 127.5
         X_train = np.expand_dims(X_train, axis=3)
         
+        # Adversarial ground truths
+        valid = -np.ones((batch_size, 1))
+        fake = np.ones((batch_size, 1))
+        dummy = np.zeros((batch_size, 1)) # for gradient penalty
+        
         for epoch in range(epochs):
             for _ in range(batch_num):
+                # Train the discriminator
+                self.gen.trainable = False
+                self.dis.trainable = True
                 for _ in range(d_iters):
                     images = X_train[np.random.randint(0, X_train.shape[0], batch_size)]
                     noise = np.random.normal(0, 1, (batch_size, self.latent_dim))
-                    # Train the discriminator
-                    _, d_loss = self.sess.run([self.d_opt, self.d_loss], feed_dict={self.real_image: images, self.random_input: noise, K.learning_phase(): 1})
+                    d_loss = self.dis_model.train_on_batch([images, noise], [valid, fake, dummy])
                 
-                # Train the generator
-                _, g_loss = self.sess.run([self.g_opt, self.g_loss], feed_dict = {self.random_input: noise, K.learning_phase(): 1})
+                # Train the generator  
+                self.gen.trainable = True
+                self.dis.trainable = False
+                g_loss = self.gen_model.train_on_batch(noise, valid)
                 
-                # Plot the progress
-                print ("%d [D loss: %f] [G loss: %f]" % (epoch, d_loss, g_loss))
+            # Plot the progress
+            print ("%d [D loss: %f] [G loss: %f]" % (epoch, d_loss[0], g_loss))
                 
             self.sample_images(epoch)
+    
+    def wasserstein_loss(self, y_true, y_pred):
+        return K.mean(y_true * y_pred)
+
+    def gradient_penalty_loss(self, y_true, y_pred, averaged_samples):
+        gradients = K.gradients(K.sum(y_pred), averaged_samples)
+        gradient_l2_norm = K.sqrt(K.sum(K.square(gradients)))
+        gradient_penalty = K.square(1 - gradient_l2_norm)
+        return gradient_penalty
     
     def sample_images(self, epoch):
         r, c = 5, 5
@@ -141,3 +154,9 @@ class GAN():
                 cnt += 1
         fig.savefig(self.save_path + "/%d.png" % epoch)
         plt.close()
+        
+class RandomWeightedAverage(_Merge):
+    """Provides a (random) weighted average between real and generated image samples"""
+    def _merge_function(self, inputs):
+        alpha = K.random_uniform((64, 1, 1, 1))
+        return (alpha * inputs[0]) + ((1 - alpha) * inputs[1])
