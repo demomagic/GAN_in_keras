@@ -14,6 +14,8 @@ Generative Adversarial Nets(GAN) Project
 [[Wasserstein GAN]](https://arxiv.org/pdf/1701.07875.pdf) 
 ## algorithm
 ![algorithm](https://github.com/demomagic/GAN_in_keras/blob/master/imgs/wgan.jpg)
+## result
+![img](https://github.com/demomagic/GAN_in_keras/blob/master/imgs/wgan.gif)
 
 # WGAN_GP
     python main.py --model=wgan_gp
@@ -21,3 +23,5 @@ Generative Adversarial Nets(GAN) Project
 [[Improved Training of Wasserstein GANs]](https://arxiv.org/pdf/1704.00028.pdf) 
 ## algorithm
 ![algorithm](https://github.com/demomagic/GAN_in_keras/blob/master/imgs/wgan_gp.jpg)
+## result
+![img](https://github.com/demomagic/GAN_in_keras/blob/master/imgs/wgan_gp.gif)
